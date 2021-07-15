@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script src='JS/pixi.min.js'></script>
+    <script src="minified/gsap.min.js"></script>
+    <script src="minified/PixiPlugin.min.js"></script>
+    <script src="minified/CSSRulePlugin.min.js"></script>
+    <script src="minified/CustomEase.min.js"></script>
+    <script src="animateTools2.js"></script>
+    <script src="musicPlayer.js"></script>
+    <script>
+        let app;
+        let input;
+        let fr;
+        let mr;
+        let sbCode;
+        let sbCodeIdx=0;
+        let keys={};
+        let curObj;//当前操作的对象
+        let mainTimeline;//主timeline
+        let timeline;//当前timeline
+        let curResource;//当前操作的图片资源
+        let resMap={};//所有图片资源的map，用于提高性能
+        let sprites=[];
+        let layers=[];
+        let ready=false;
+        let fullon=true;
+        window.onload=function(){
+            app=new PIXI.Application(
+                {
+                    width:1920,
+                    height:1080,
+                    backgroundColor:0x000000,
+                    antialias:true,
+                    resolution:1,
+                    powerPreference:"high-performance"
+                }
+            )
+
+            gsap.registerPlugin(PixiPlugin);
+            gsap.registerPlugin(CustomEase);
+
+            app.ticker.add(gameloop);//添加游戏循环
+            document.querySelector("#pixiDiv").appendChild(app.view);//加入画布到dom中
+            input=document.querySelector("#input");
+            mainTimeline=gsap.timeline();
+            timeline=mainTimeline;
+            createLayers();
+            //timeline.timeScale(2);
+            timeline.autoRemoveChildren=true;
+            timeline.pause();
+
+            //测试代码
+            //timeline.play();
+            /*let ntimeline=gsap.timeline();
+            let t=PIXI.Sprite.from("SBD12\\sb\\sprites\\white.png");//图片纹理路径
+            layers[0].addChild(t);
+            ntimeline.to(t,{
+                startAt:{
+                    pixi:{
+                        scale:10
+                    }
+                },
+                pixi:{
+                    scale:5
+                }
+            })
+            mainTimeline.add(ntimeline,1);
+            mainTimeline.play();*/
+        }
+        function tttt() {
+            console.log("sssssss")
+        }
+        function cccc() {
+            console.log("ccccccc")
+        }
+
+        function loadDelay(n) {//延迟播放读取秒数
+            ready=true;
+            console.log("lazyload starts after: "+n)
+            window.setTimeout(()=>{
+                console.log("nowing is lazyloading")
+                if(timeline.paused){
+                    timeline.play();//动画开始执行
+                    playMusic();//播放音乐文件
+                }
+            },n)
+        }
+
+        function createLayers(){//创建图层，如前景层、背景层
+            let Background=new PIXI.Container();
+            app.stage.addChild(Background);
+            Background.sortableChildren =true;
+            Background.zIndex=5;
+            Background.x=500;
+            Background.y=300;
+            layers.push(Background);
+
+            let Foreground=new PIXI.Container();
+            /*Foreground.setProperties({
+                vertices:true,
+                position:true,
+                tint:true,
+                rotation:true,
+                uvs:true
+            });*/
+            app.stage.addChild(Foreground);
+            Foreground.sortableChildren =true;
+            Foreground.zIndex=0;
+            Foreground.x=500;
+            Foreground.y=300;
+            layers.push(Foreground);
+        }
+
+        function loadSb(e){//读取Sb文件代码
+            fr=new FileReader();
+            fr.readAsText(input.files[0],"UTF-8");
+            fr.onload=function(e){//加载完毕后
+                sbCode=fr.result.split("\n");
+                console.log(sbCode.length);
+                loadTextures();
+                //loadDelay(document.querySelector("#delay").value);
+                parseScript();
+            }
+        }
+
+        function loadTextures() {//预先加载图片纹理
+            sbCode.forEach((str,idx) => {
+                if(str.startsWith("Sprite")){//表示是一个图片
+                    let params=str.split(",");
+                    let path=document.querySelector("#folder").value+params[3].replace(/\"/g,"").replace(/\\/g,"/").trim();
+                    let texture = PIXI.Texture.from(path);
+                    sprites[path]=texture;
+                }
+            });
+        }
+
+        function parseScript(){//一次性解析脚本
+            sbCode.forEach((str,idx) => {
+                if(str.startsWith("Sprite")){//表示是一个图片
+                    loadResource(str);
+                }else if(str.startsWith(" ")){//空格开头，对物件进行操作
+                    parseCommands(str);
+                }
+                if((idx)%2000==0){
+                    console.log("now loaded: "+idx)
+                }
+
+                if(idx==sbCode.length-1){//等所有脚本解析完毕后再播放
+                    playMusic();//播放音乐文件
+                    console.log("load done!!!");
+                    timeline.play();//动画开始执行
+                }
+            });
+        }
+
+        function parseScriptLite(){//解析脚本轻量版
+            let str = sbCode[sbCodeIdx++];
+            if(str.startsWith("Sprite")){//表示是一个图片
+                //console.log(str)
+                loadResource(str);
+            }else if(str.startsWith(" ")){//空格开头，对物件进行操作
+                //console.log(str)
+                parseCommands(str);
+            }
+        }
+
+        function gameloop(delta){//每秒约60次
+            /*if(ready&&(sbCodeIdx<sbCode.length)){
+                for(let i=0;i<timeline.paused?30:10&&sbCodeIdx<sbCode.length;i++){
+                    parseScriptLite();
+                    if((sbCodeIdx+1)%2000==0){
+                        console.log("now loaded: "+sbCodeIdx)
+                    }
+                    if(sbCodeIdx==sbCode.length-1){//等所有脚本解析完毕后再播放
+                        console.log("load done!!!");
+                    }
+                }
+            }*/
+        }
+
+        function parseCommands(str) {
+            let params=str.split(",");
+            if(curResource.isLooping==1){//处于循环状态
+                if(str.startsWith("  ")){//在循环内部
+                    params[0]=params[0].slice(1);
+                    //console.log(params);
+                }else{//退出循环
+                    exitLoop();
+                }
+            }
+            if(params[0].startsWith(" S")){//Scale 对元件进行缩放
+                animateS(params,curResource);
+            }else if(params[0].startsWith(" F")){//对元件进行透明度操作
+                animateF(params,curResource);
+            }else if(params[0].startsWith(" MX")){//对元件进行X方向操作
+                animateMX(params,curResource);
+            }else if(params[0].startsWith(" MY")){//对元件进行Y方向操作
+                animateMY(params,curResource);
+            }else if(params[0].startsWith(" M")){//对元件进行XY方向操作
+                animateM(params,curResource);
+            }else if(params[0].startsWith(" R")){//对元件进行旋转
+                animateR(params,curResource);
+            }else if(params[0].startsWith(" V")){//对元件矢量操作（拉长/压扁）
+                animateV(params,curResource);
+            }else if(params[0].startsWith(" C")){//对元件进行颜色操作（RGB方式改变色调）
+                animateC(params,curResource);
+            }else if(params[0].startsWith(" L")){//循环
+                curResource.isLooping=1;
+                curResource.loopCnt=Number(params[2]);//循环次数
+                let tTimeline=gsap.timeline();
+                mainTimeline.add(tTimeline,Number(params[1])/1000);
+                timeline=tTimeline;//切换timeline到循环timeline
+            }
+        }
+
+        function exitLoop(){//退出循环
+            if(curResource!=undefined&&curResource.isLooping){
+                console.log("now exit!!!");
+                timeline.repeat(curResource.loopCnt-1);
+                curResource.isLooping=0;
+                curResource.loopCnt=0;
+            }
+            timeline=mainTimeline;//切换回主timeline
+        }
+
+        function loadResource(str){//读取sb中所用到的图片资源
+            exitLoop();
+            let params=str.split(",");
+            let path=document.querySelector("#folder").value+params[3].replace(/\"/g,"").replace(/\\/g,"/").trim();
+            let tempRes;
+            tempRes=PIXI.Sprite.from(sprites[path]);//图片纹理路径
+            chooseOrigin(params[2],tempRes);//选择原点所在处
+            tempRes.x=params[4];
+            tempRes.y=params[5];
+            tempRes.visible=false;
+            tempRes.isLooping=0;
+            tempRes.initCnt=0;
+            chooseLayers(params[1],tempRes);//选择所在图层
+            curResource=tempRes;
+            sprites.push(tempRes);
+        }
+
+        function chooseOrigin(originStr,obj){//选择原点位置
+            if(originStr=="Centre"){
+                obj.anchor.set(0.5);
+            }else if(originStr=="CentreLeft"){
+                obj.anchor.set(0,0.5);
+            }else if(originStr=="CentreRight"){
+                obj.anchor.set(1,0.5);
+            }else if(originStr=="TopCentre"){
+                obj.anchor.set(0.5,0);
+            }else if(originStr=="TopLeft"){
+                obj.anchor.set(0,0);
+            }else if(originStr=="TopRight"){
+                obj.anchor.set(1,0);
+            }else if(originStr=="BottomCentre"){
+                obj.anchor.set(0.5,1);
+            }else if(originStr=="BottomLeft"){
+                obj.anchor.set(0,1);
+            }else if(originStr=="BottomRight"){
+                obj.anchor.set(1,1);
+            }
+        }
+
+        function chooseLayers(layerStr,obj){//选择图层
+            if(layerStr=="Background"){
+                layers[0].addChild(obj);
+                obj.father="BG";
+            }else if(layerStr=="Foreground"){
+                layers[1].addChild(obj);
+                obj.father="FG";
+            }
+        }
+        
+        
+    </script>
+</head>
+<body>
+    <div id="pixiDiv"></div>
+    <input id="input" type="file" onchange="loadSb(this)"/>
+    <input id="music" type="file" onchange="loadMusic(this)"/>
+    <input id="delay" type="number" value="0"/>
+    <input id="folder" type="text" value="SBD24/"/>
+    <audio id="audioNode">
+        <source id="musicSrc">
+    </audio>
+</body>
+</html>
